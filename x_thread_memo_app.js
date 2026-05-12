@@ -1,6 +1,8 @@
 (function () {
   "use strict";
 
+  const STORAGE_KEY = "x-thread-memo-app-state-v2";
+
   const DEFAULT_STATE = {
     sourceText: [
       "このページは、Xに投稿したい長文を、手元で分割しながら整えるための作業台です。勢いで長く書いたメモをそのまま貼り付けて、どこで区切るかを見直す使い方を想定しています。",
@@ -22,6 +24,8 @@
     assistTargetChars: 140,
     indexMode: "suffix",
     indexLineBreaks: 1,
+    customIndexMiddle: "",
+    customIndexLast: "",
   };
 
   const X_WEIGHT_CONFIG = {
@@ -62,6 +66,69 @@
 
   function normalizeInput(text) {
     return String(text ?? "").replace(/\r\n?/g, "\n");
+  }
+
+  function normalizeState(rawState) {
+    const state = rawState && typeof rawState === "object" ? rawState : {};
+
+    return {
+      sourceText: normalizeInput(
+        typeof state.sourceText === "string" ? state.sourceText : DEFAULT_STATE.sourceText,
+      ),
+      delimiterText: normalizeInput(
+        typeof state.delimiterText === "string"
+          ? state.delimiterText
+          : DEFAULT_STATE.delimiterText,
+      ),
+      ignoreBlankLinesAroundDelimiter: Boolean(state.ignoreBlankLinesAroundDelimiter),
+      assistTargetChars: clampInteger(
+        state.assistTargetChars,
+        DEFAULT_STATE.assistTargetChars,
+        1,
+        10000,
+      ),
+      indexMode:
+        typeof state.indexMode === "string" ? state.indexMode : DEFAULT_STATE.indexMode,
+      indexLineBreaks: clampInteger(
+        state.indexLineBreaks,
+        DEFAULT_STATE.indexLineBreaks,
+        0,
+        10,
+      ),
+      customIndexMiddle:
+        typeof state.customIndexMiddle === "string" ? state.customIndexMiddle : "",
+      customIndexLast: typeof state.customIndexLast === "string" ? state.customIndexLast : "",
+    };
+  }
+
+  function loadStoredState() {
+    if (typeof window === "undefined" || !window.localStorage) {
+      return normalizeState(DEFAULT_STATE);
+    }
+
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        return normalizeState(DEFAULT_STATE);
+      }
+
+      return normalizeState(JSON.parse(raw));
+    } catch (error) {
+      console.warn("Failed to load stored state.", error);
+      return normalizeState(DEFAULT_STATE);
+    }
+  }
+
+  function saveStoredState(state) {
+    if (typeof window === "undefined" || !window.localStorage) {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeState(state)));
+    } catch (error) {
+      console.warn("Failed to save state.", error);
+    }
   }
 
   function clampInteger(value, fallback, min, max) {
@@ -304,7 +371,7 @@
     });
   }
 
-  function buildIndexedText(content, index, total, indexMode, indexLineBreaks) {
+  function buildIndexedText(content, index, total, indexMode, indexLineBreaks, customIndexMiddle, customIndexLast) {
     const label = `(${index}/${total})`;
     const breaks = "\n".repeat(Math.max(0, indexLineBreaks));
 
@@ -314,6 +381,15 @@
 
     if (indexMode === "suffix") {
       return content ? `${content}${breaks}${label}` : label;
+    }
+
+    if (indexMode === "custom-suffix") {
+      const customText = index === total ? customIndexLast : customIndexMiddle;
+      if (!customText) {
+        return content;
+      }
+
+      return content ? `${content}${breaks}${customText}` : customText;
     }
 
     return content;
@@ -334,6 +410,8 @@
         segments.length,
         state.indexMode,
         state.indexLineBreaks,
+        state.customIndexMiddle,
+        state.customIndexLast,
       );
       const weightedLength = countXWeightedLength(finalText);
 
@@ -514,6 +592,8 @@
     const runAssist = document.querySelector("#runAssist");
     const indexModeInputs = document.querySelectorAll('input[name="indexMode"]');
     const indexLineBreaks = document.querySelector("#indexLineBreaks");
+    const customIndexMiddle = document.querySelector("#customIndexMiddle");
+    const customIndexLast = document.querySelector("#customIndexLast");
     const previewCount = document.querySelector("#previewCount");
     const previewOverflow = document.querySelector("#previewOverflow");
     const previewList = document.querySelector("#previewList");
@@ -532,6 +612,8 @@
       !runAssist ||
       indexModeInputs.length === 0 ||
       !indexLineBreaks ||
+      !customIndexMiddle ||
+      !customIndexLast ||
       !previewCount ||
       !previewOverflow ||
       !previewList ||
@@ -541,9 +623,9 @@
       return;
     }
 
-    const state = { ...DEFAULT_STATE };
+    const state = loadStoredState();
     let isComposing = false;
-    let delimiterPristine = true;
+    let delimiterPristine = state.delimiterText === DEFAULT_STATE.delimiterText;
     let toastTimer = null;
 
     function showToast(message) {
@@ -564,6 +646,12 @@
       return checked ? checked.value : DEFAULT_STATE.indexMode;
     }
 
+    function updateCustomIndexFields() {
+      const enabled = state.indexMode === "custom-suffix";
+      customIndexMiddle.disabled = !enabled;
+      customIndexLast.disabled = !enabled;
+    }
+
     function syncFormFromState() {
       sourceText.value = state.sourceText;
       delimiterText.value = state.delimiterText;
@@ -572,10 +660,14 @@
       assistTargetChars.value = String(state.assistTargetChars);
       assistTargetDisplay.textContent = `全角${state.assistTargetChars}字相当`;
       indexLineBreaks.value = String(state.indexLineBreaks);
+      customIndexMiddle.value = state.customIndexMiddle;
+      customIndexLast.value = state.customIndexLast;
 
       Array.from(indexModeInputs).forEach((input) => {
         input.checked = input.value === state.indexMode;
       });
+
+      updateCustomIndexFields();
     }
 
     function syncStateFromForm() {
@@ -590,9 +682,12 @@
       );
       state.indexMode = readIndexMode();
       state.indexLineBreaks = clampInteger(indexLineBreaks.value, state.indexLineBreaks, 0, 10);
+      state.customIndexMiddle = normalizeInput(customIndexMiddle.value);
+      state.customIndexLast = normalizeInput(customIndexLast.value);
       delimiterPreview.textContent = describeDelimiter(state.delimiterText);
       assistTargetDisplay.textContent = `全角${state.assistTargetChars}字相当`;
       indexLineBreaks.value = String(state.indexLineBreaks);
+      updateCustomIndexFields();
     }
 
     function replaceDelimiterWithDefault() {
@@ -671,6 +766,7 @@
 
     function refresh() {
       syncStateFromForm();
+      saveStoredState(state);
       renderPreview();
     }
 
@@ -721,12 +817,15 @@
     ignoreBlankLinesAroundDelimiter.addEventListener("change", refresh);
     assistTargetChars.addEventListener("change", refresh);
     indexLineBreaks.addEventListener("change", refresh);
+    customIndexMiddle.addEventListener("input", refresh);
+    customIndexLast.addEventListener("input", refresh);
     Array.from(indexModeInputs).forEach((input) => {
       input.addEventListener("change", refresh);
     });
 
     resetDelimiter.addEventListener("click", () => {
       replaceDelimiterWithDefault();
+      saveStoredState(state);
       renderPreview();
       showToast("区切り文字列をデフォルトに戻しました。");
     });
@@ -734,6 +833,7 @@
     clearSource.addEventListener("click", () => {
       state.sourceText = "";
       sourceText.value = "";
+      saveStoredState(state);
       renderPreview();
       showToast("入力欄をクリアしました。");
     });
@@ -754,6 +854,7 @@
 
       state.sourceText = result.text;
       sourceText.value = state.sourceText;
+      saveStoredState(state);
       renderPreview();
 
       if (result.insertedCount === 0) {

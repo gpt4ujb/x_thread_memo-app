@@ -126,7 +126,8 @@
       }
 
       textarea,
-      input[type="number"] {
+      input[type="number"],
+      input[type="text"] {
         width: 100%;
         border-radius: 18px;
         border: 1px solid var(--line);
@@ -151,7 +152,8 @@
         line-height: 1.5;
       }
 
-      input[type="number"] {
+      input[type="number"],
+      input[type="text"] {
         padding: 12px 14px;
       }
 
@@ -575,10 +577,22 @@
                 <input type="radio" name="indexMode" value="suffix" />
                 <span>末尾に (1/n)</span>
               </label>
+              <label class="radio-row">
+                <input type="radio" name="indexMode" value="custom-suffix" />
+                <span>任意(末尾)</span>
+              </label>
             </div>
             <div class="inline-field">
               <label for="indexLineBreaks">インデックス改行</label>
               <input id="indexLineBreaks" class="short-number" type="number" min="0" step="1" />
+            </div>
+            <div class="inline-field">
+              <label for="customIndexMiddle">途中</label>
+              <input id="customIndexMiddle" type="text" />
+            </div>
+            <div class="inline-field">
+              <label for="customIndexLast">最後</label>
+              <input id="customIndexLast" type="text" />
             </div>
           </section>
         </div>
