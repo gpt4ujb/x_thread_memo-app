@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>X分割メモワークベンチ</title>
+    <style>
+      :root {
+        --bg: #f2ecdf;
+        --panel: rgba(255, 252, 245, 0.9);
+        --panel-strong: rgba(255, 252, 245, 0.98);
+        --text: #18252f;
+        --muted: #5a6b75;
+        --line: rgba(24, 37, 47, 0.12);
+        --accent: #1f7a6c;
+        --accent-strong: #0f5c51;
+        --accent-soft: rgba(31, 122, 108, 0.12);
+        --warn: #be5334;
+        --warn-soft: rgba(190, 83, 52, 0.12);
+        --shadow: 0 24px 60px rgba(31, 43, 53, 0.12);
+        --radius-xl: 28px;
+        --radius-lg: 20px;
+        --radius-md: 14px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--text);
+        font-family: "Yu Gothic UI", "BIZ UDPGothic", "Segoe UI Variable", sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(255, 255, 255, 0.85), transparent 32%),
+          linear-gradient(145deg, #f4eee5, #e0ebea 58%, #d8e6dd);
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.24) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.18) 1px, transparent 1px);
+        background-size: 28px 28px;
+        mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.18), transparent 90%);
+      }
+
+      .shell {
+        width: min(1480px, calc(100vw - 32px));
+        margin: 20px auto 28px;
+      }
+
+      .topbar,
+      .panel {
+        background: var(--panel);
+        backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.72);
+        box-shadow: var(--shadow);
+      }
+
+      .topbar {
+        border-radius: var(--radius-xl);
+        padding: 18px 20px;
+        margin-bottom: 18px;
+      }
+
+      .topbar__label {
+        margin: 0;
+        font-size: clamp(24px, 3vw, 32px);
+        font-weight: 700;
+        line-height: 1;
+        letter-spacing: -0.04em;
+        margin-bottom: 10px;
+      }
+
+      .topbar__settings {
+        display: grid;
+        grid-template-columns: minmax(320px, 1.7fr) minmax(180px, 0.7fr) minmax(180px, 0.75fr) minmax(220px, 0.9fr);
+        gap: 12px;
+        align-items: stretch;
+      }
+
+      .topbar__settings .setting-block {
+        height: 100%;
+      }
+
+      .stage {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 18px;
+      }
+
+      .panel {
+        border-radius: var(--radius-xl);
+        padding: 22px;
+      }
+
+      .panel__header {
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: 14px;
+        margin-bottom: 16px;
+      }
+
+      .panel__title {
+        margin: 0;
+        font-size: 22px;
+      }
+
+      .panel__subtitle {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.7;
+      }
+
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+
+      textarea,
+      input[type="number"] {
+        width: 100%;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: var(--panel-strong);
+        color: var(--text);
+      }
+
+      textarea {
+        min-height: 430px;
+        padding: 18px;
+        resize: vertical;
+        line-height: 1.8;
+      }
+
+      #sourceText {
+        min-height: 860px;
+      }
+
+      #delimiterText {
+        min-height: 74px;
+        font-family: "Consolas", "SFMono-Regular", monospace;
+        line-height: 1.5;
+      }
+
+      input[type="number"] {
+        padding: 12px 14px;
+      }
+
+      .setting-block {
+        padding: 14px;
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.62);
+        border: 1px solid rgba(255, 255, 255, 0.74);
+      }
+
+      .setting-block--compact {
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+      }
+
+      .setting-block__head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+
+      .setting-block__title {
+        margin: 0;
+        font-size: 16px;
+      }
+
+      .helper {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .delimiter-preview {
+        margin-bottom: 8px;
+        padding: 8px 10px;
+        border-radius: 14px;
+        background: rgba(31, 122, 108, 0.08);
+        color: var(--accent-strong);
+        font-size: 13px;
+        font-family: "Consolas", "SFMono-Regular", monospace;
+        word-break: break-all;
+      }
+
+      .checkbox-row {
+        display: flex;
+        align-items: start;
+        gap: 10px;
+        margin-top: 0;
+        color: var(--text);
+      }
+
+      .checkbox-row input {
+        margin-top: 3px;
+      }
+
+      .text-tools {
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .assist-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: end;
+      }
+
+      .inline-field {
+        margin-top: 8px;
+      }
+
+      .inline-field label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .compact-metric {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        margin-top: 6px;
+      }
+
+      .compact-metric span {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .compact-metric strong {
+        font-size: 18px;
+      }
+
+      .primary-button,
+      .copy-button,
+      .secondary-button {
+        border: 0;
+        border-radius: 999px;
+        cursor: pointer;
+        transition: transform 150ms ease, box-shadow 150ms ease, opacity 150ms ease;
+      }
+
+      .primary-button {
+        padding: 12px 18px;
+        background: linear-gradient(135deg, var(--accent), #3f998b);
+        color: white;
+        box-shadow: 0 14px 32px rgba(31, 122, 108, 0.22);
+      }
+
+      .copy-button {
+        padding: 10px 16px;
+        background: rgba(255, 255, 255, 0.82);
+        color: var(--text);
+        border: 1px solid var(--line);
+      }
+
+      .primary-button:hover,
+      .copy-button:hover,
+      .secondary-button:hover {
+        transform: translateY(-1px);
+      }
+
+      .secondary-button {
+        padding: 8px 12px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.78);
+        color: var(--text);
+        white-space: nowrap;
+      }
+
+      .index-options {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .radio-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .radio-row label {
+        cursor: pointer;
+      }
+
+      .short-number {
+        width: 84px;
+      }
+
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      .summary-card {
+        padding: 14px 16px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.78);
+      }
+
+      .summary-card span {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .summary-card strong {
+        display: block;
+        margin-top: 6px;
+        font-size: 22px;
+      }
+
+      .preview-list {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .empty-state {
+        padding: 22px;
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.52);
+        border: 1px dashed rgba(24, 37, 47, 0.18);
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .post-card {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 164px;
+        gap: 16px;
+        align-items: stretch;
+        padding: 16px;
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.74);
+        border: 1px solid rgba(255, 255, 255, 0.82);
+      }
+
+      .post-card[data-overflow="true"] {
+        background: rgba(255, 248, 244, 0.92);
+        border-color: rgba(190, 83, 52, 0.22);
+      }
+
+      .post-card__main {
+        min-width: 0;
+      }
+
+      .post-card__main-header {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+
+      .post-card__badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 8px 10px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent-strong);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+      }
+
+      .post-card__side {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        align-items: stretch;
+        justify-content: flex-start;
+        padding-left: 16px;
+        border-left: 1px solid var(--line);
+      }
+
+      .post-card__side-label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .post-card__side-value {
+        display: block;
+        font-size: 21px;
+        line-height: 1.1;
+      }
+
+      .post-card__status {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 74px;
+        padding: 8px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .post-card__status[data-kind="ok"] {
+        background: rgba(31, 122, 108, 0.12);
+        color: var(--accent-strong);
+      }
+
+      .post-card__status[data-kind="overflow"] {
+        background: var(--warn-soft);
+        color: var(--warn);
+      }
+
+      .post-card__body {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.8;
+        font-family: inherit;
+      }
+
+      .toast {
+        position: fixed;
+        right: 18px;
+        bottom: 18px;
+        padding: 14px 18px;
+        border-radius: 16px;
+        background: rgba(24, 37, 47, 0.94);
+        color: white;
+        box-shadow: 0 18px 36px rgba(0, 0, 0, 0.22);
+        opacity: 0;
+        transform: translateY(10px);
+        transition: opacity 180ms ease, transform 180ms ease;
+        pointer-events: none;
+      }
+
+      .toast[data-visible="true"] {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      @media (max-width: 1120px) {
+        .topbar__settings {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .stage {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .shell {
+          width: min(100vw - 16px, 100%);
+          margin: 10px auto 18px;
+        }
+
+        .topbar,
+        .panel {
+          padding: 18px;
+        }
+
+        textarea {
+          min-height: 320px;
+        }
+
+        #sourceText {
+          min-height: 540px;
+        }
+
+        .assist-row,
+        .post-card {
+          grid-template-columns: 1fr;
+        }
+
+        .topbar__settings {
+          grid-template-columns: 1fr;
+        }
+
+        .summary-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .post-card__side {
+          padding-left: 0;
+          padding-top: 14px;
+          border-left: 0;
+          border-top: 1px solid var(--line);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <p class="topbar__label">X投稿用長文分割</p>
+        <div class="topbar__settings">
+          <section class="setting-block setting-block--wide">
+            <div class="setting-block__head">
+              <h2 class="setting-block__title">区切り文字列</h2>
+              <button id="resetDelimiter" type="button" class="secondary-button">
+                デフォルト(改行3回連続)に戻す
+              </button>
+            </div>
+            <div id="delimiterPreview" class="delimiter-preview"></div>
+            <textarea id="delimiterText" spellcheck="false"></textarea>
+            <p class="helper">
+              初期値は改行3回連続です。空欄にすると分割は行わず、全文を1件として扱います。
+            </p>
+          </section>
+
+          <section class="setting-block setting-block--compact">
+            <div class="setting-block__head">
+              <h2 class="setting-block__title">改行無視</h2>
+            </div>
+            <label class="checkbox-row">
+              <input id="ignoreBlankLinesAroundDelimiter" type="checkbox" />
+              <span>区切り文字前後の空行を無視する</span>
+            </label>
+            <p class="helper">改行系の区切りを使うときの補助です。</p>
+          </section>
+
+          <section class="setting-block setting-block--compact">
+            <div class="setting-block__head">
+              <h2 class="setting-block__title">自動アシスト</h2>
+            </div>
+            <div class="assist-row">
+              <div>
+                <label for="assistTargetChars">目安文字数</label>
+                <input id="assistTargetChars" type="number" min="1" step="1" />
+              </div>
+              <button id="runAssist" type="button" class="primary-button">
+                実行
+              </button>
+            </div>
+            <div class="compact-metric">
+              <span>現在値</span>
+              <strong id="assistTargetDisplay">全角140字相当</strong>
+            </div>
+          </section>
+
+          <section class="setting-block setting-block--compact">
+            <div class="setting-block__head">
+              <h2 class="setting-block__title">インデックス</h2>
+            </div>
+            <div class="index-options">
+              <label class="radio-row">
+                <input type="radio" name="indexMode" value="none" />
+                <span>なし</span>
+              </label>
+              <label class="radio-row">
+                <input type="radio" name="indexMode" value="prefix" />
+                <span>先頭に (1/n)</span>
+              </label>
+              <label class="radio-row">
+                <input type="radio" name="indexMode" value="suffix" />
+                <span>末尾に (1/n)</span>
+              </label>
+            </div>
+            <div class="inline-field">
+              <label for="indexLineBreaks">インデックス改行</label>
+              <input id="indexLineBreaks" class="short-number" type="number" min="0" step="1" />
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="stage">
+        <section>
+          <article class="panel">
+            <div class="panel__header">
+              <div>
+                <h2 class="panel__title">原稿編集</h2>
+                <p class="panel__subtitle">
+                  区切り文字を含んだ原稿をそのまま書きます。アプリは、自動アシスト実行時以外は本文を勝手に書き換えません。
+                </p>
+              </div>
+              <button id="clearSource" type="button" class="secondary-button">クリア</button>
+            </div>
+
+            <textarea
+              id="sourceText"
+              spellcheck="false"
+              placeholder="ここに原稿を入力します。区切りたい場所には、設定した区切り文字列を自分で打ち込みます。"
+            ></textarea>
+
+          </article>
+        </section>
+
+        <section>
+          <article class="panel">
+            <div class="panel__header">
+              <div>
+                <h2 class="panel__title">分割結果</h2>
+                <p class="panel__subtitle">
+                  区切り文字を除去し、インデックスを反映した最終形を表示します。
+                </p>
+              </div>
+            </div>
+
+            <div class="summary-grid">
+              <div class="summary-card">
+                <span>投稿数</span>
+                <strong id="previewCount">0件</strong>
+              </div>
+              <div class="summary-card">
+                <span>超過数</span>
+                <strong id="previewOverflow">0件</strong>
+              </div>
+            </div>
+
+            <div id="previewEmpty" class="empty-state" style="margin-top: 16px">
+              原稿を入力すると、ここに投稿単位の完成形が表示されます。各カードのコピー
+              ボタンから、そのまま任意の入力欄へ貼り付けできます。
+            </div>
+            <div id="previewList" class="preview-list" style="margin-top: 16px"></div>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" data-visible="false" aria-live="polite"></div>
+    <script src="./x_thread_memo_app.js"></script>
+  </body>
+</html>
