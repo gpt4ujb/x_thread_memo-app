@@ -149,7 +149,7 @@
 
       .editor-layout {
         display: grid;
-        grid-template-columns: 12px minmax(0, 1fr);
+        grid-template-columns: 48px minmax(0, 1fr);
         gap: 6px;
         align-items: stretch;
       }
@@ -172,9 +172,23 @@
 
       .line-gutter__row {
         height: var(--gutter-line-height);
-        display: flex;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 4px;
+        column-gap: 4px;
         align-items: center;
-        justify-content: center;
+      }
+
+      .line-gutter__value {
+        justify-self: end;
+        font-size: 11px;
+        line-height: 1;
+        color: rgba(24, 37, 47, 0.46);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .line-gutter__value[data-kind="overflow"] {
+        color: var(--warn);
+        font-weight: 700;
       }
 
       .line-gutter__mark {

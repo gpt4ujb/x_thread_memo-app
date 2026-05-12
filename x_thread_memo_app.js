@@ -371,57 +371,126 @@
     });
   }
 
-  function buildIndexedText(content, index, total, indexMode, indexLineBreaks, customIndexMiddle, customIndexLast) {
+  function buildIndexAffixes(
+    content,
+    index,
+    total,
+    indexMode,
+    indexLineBreaks,
+    customIndexMiddle,
+    customIndexLast,
+  ) {
     const label = `(${index}/${total})`;
     const breaks = "\n".repeat(Math.max(0, indexLineBreaks));
 
     if (indexMode === "prefix") {
-      return content ? `${label}${breaks}${content}` : label;
+      return {
+        prefix: content ? `${label}${breaks}` : label,
+        suffix: "",
+      };
     }
 
     if (indexMode === "suffix") {
-      return content ? `${content}${breaks}${label}` : label;
+      return {
+        prefix: "",
+        suffix: content ? `${breaks}${label}` : label,
+      };
     }
 
     if (indexMode === "custom-suffix") {
       const customText = index === total ? customIndexLast : customIndexMiddle;
       if (!customText) {
-        return content;
+        return {
+          prefix: "",
+          suffix: "",
+        };
       }
 
-      return content ? `${content}${breaks}${customText}` : customText;
+      return {
+        prefix: "",
+        suffix: content ? `${breaks}${customText}` : customText,
+      };
     }
 
-    return content;
+    return {
+      prefix: "",
+      suffix: "",
+    };
   }
 
-  function buildPreviewModel(state) {
+  function buildIndexedText(content, index, total, indexMode, indexLineBreaks, customIndexMiddle, customIndexLast) {
+    const affixes = buildIndexAffixes(
+      content,
+      index,
+      total,
+      indexMode,
+      indexLineBreaks,
+      customIndexMiddle,
+      customIndexLast,
+    );
+
+    return `${affixes.prefix}${content}${affixes.suffix}`;
+  }
+
+  function buildVisibleSegmentModels(state) {
     const segments = splitSourceWithMetadata(
       state.sourceText,
       state.delimiterText,
       state.ignoreBlankLinesAroundDelimiter,
-    ).filter((segment) => segment.displayText !== "");
+    );
+    const visibleSegments = [];
 
-    const posts = segments.map((segment, index) => {
-      const postNumber = index + 1;
-      const finalText = buildIndexedText(
+    segments.forEach((segment, rawIndex) => {
+      if (segment.displayText === "") {
+        return;
+      }
+
+      visibleSegments.push({
+        ...segment,
+        rawIndex,
+      });
+    });
+
+    const total = visibleSegments.length;
+
+    return visibleSegments.map((segment, visibleIndex) => {
+      const index = visibleIndex + 1;
+      const affixes = buildIndexAffixes(
         segment.displayText,
-        postNumber,
-        segments.length,
+        index,
+        total,
         state.indexMode,
         state.indexLineBreaks,
         state.customIndexMiddle,
         state.customIndexLast,
       );
+      const finalText = `${affixes.prefix}${segment.displayText}${affixes.suffix}`;
       const weightedLength = countXWeightedLength(finalText);
 
       return {
-        index: postNumber,
-        total: segments.length,
-        rawText: segment.displayText,
+        ...segment,
+        index,
+        total,
+        prefixText: affixes.prefix,
+        suffixText: affixes.suffix,
         finalText,
         weightedLength,
         isOverflow: weightedLength > X_WEIGHT_CONFIG.maxWeightedLength,
+      };
+    });
+  }
+
+  function buildPreviewModel(state) {
+    const segments = buildVisibleSegmentModels(state);
+
+    const posts = segments.map((segment) => {
+      return {
+        index: segment.index,
+        total: segment.total,
+        rawText: segment.displayText,
+        finalText: segment.finalText,
+        weightedLength: segment.weightedLength,
+        isOverflow: segment.isOverflow,
       };
     });
 
@@ -429,45 +498,6 @@
       posts,
       overflowCount: posts.filter((post) => post.isOverflow).length,
     };
-  }
-
-  function buildSegmentStatusList(state) {
-    const segments = splitSourceWithMetadata(
-      state.sourceText,
-      state.delimiterText,
-      state.ignoreBlankLinesAroundDelimiter,
-    );
-    const visibleCount = segments.filter((segment) => segment.displayText !== "").length;
-
-    let visibleIndex = 0;
-
-    return segments.map((segment, rawIndex) => {
-      if (segment.displayText === "") {
-        return {
-          rawIndex,
-          isVisible: false,
-          isOverflow: false,
-        };
-      }
-
-      visibleIndex += 1;
-
-      const finalText = buildIndexedText(
-        segment.displayText,
-        visibleIndex,
-        visibleCount,
-        state.indexMode,
-        state.indexLineBreaks,
-        state.customIndexMiddle,
-        state.customIndexLast,
-      );
-
-      return {
-        rawIndex,
-        isVisible: true,
-        isOverflow: countXWeightedLength(finalText) > X_WEIGHT_CONFIG.maxWeightedLength,
-      };
-    });
   }
 
   function getLogicalLineRanges(text) {
@@ -574,7 +604,7 @@
     return blocks[blocks.length - 1];
   }
 
-  function resolveActiveRawIndex(block, segmentStatuses) {
+  function resolveActiveRawIndex(block, visibleRawIndexes) {
     if (!block) {
       return null;
     }
@@ -586,8 +616,7 @@
     const preferredIndexes = [block.beforeRawIndex, block.afterRawIndex];
 
     for (const rawIndex of preferredIndexes) {
-      const status = segmentStatuses[rawIndex];
-      if (status && status.isVisible) {
+      if (visibleRawIndexes.has(rawIndex)) {
         return rawIndex;
       }
     }
@@ -601,27 +630,35 @@
 
     if (source === "") {
       return {
+        activeRawIndex: null,
+        segmentModelMap: new Map(),
         lines: lines.map(() => ({
           text: "",
+          rawIndex: null,
           kind: "empty",
           isActive: false,
         })),
       };
     }
 
-    const segmentStatuses = buildSegmentStatusList(state);
+    const segmentModels = buildVisibleSegmentModels(state);
+    const segmentModelMap = new Map(segmentModels.map((segment) => [segment.rawIndex, segment]));
+    const visibleRawIndexes = new Set(segmentModels.map((segment) => segment.rawIndex));
     const blocks = buildSourceBlocks(source, state.delimiterText);
     const activeBlock = findBlockAtOffset(blocks, caretOffset);
-    const activeRawIndex = resolveActiveRawIndex(activeBlock, segmentStatuses);
+    const activeRawIndex = resolveActiveRawIndex(activeBlock, visibleRawIndexes);
     const lastProbeOffset = Math.max(0, source.length - 1);
 
     return {
+      activeRawIndex,
+      segmentModelMap,
       lines: lines.map((line) => {
         const block = findBlockAtOffset(blocks, Math.min(line.start, lastProbeOffset));
 
         if (!block) {
           return {
             text: source.slice(line.start, line.end),
+            rawIndex: null,
             kind: "empty",
             isActive: false,
           };
@@ -630,16 +667,18 @@
         if (block.type === "delimiter") {
           return {
             text: source.slice(line.start, line.end),
+            rawIndex: null,
             kind: "separator",
             isActive: false,
           };
         }
 
-        const status = segmentStatuses[block.rawIndex];
-        const kind = !status || !status.isVisible ? "empty" : status.isOverflow ? "overflow" : "ok";
+        const segmentModel = segmentModelMap.get(block.rawIndex);
+        const kind = !segmentModel ? "empty" : "ok";
 
         return {
           text: source.slice(line.start, line.end),
+          rawIndex: block.rawIndex,
           kind,
           isActive: activeRawIndex === block.rawIndex,
         };
@@ -907,43 +946,156 @@
       sourceGutterTrack.style.transform = `translateY(${-sourceText.scrollTop}px)`;
     }
 
-    function measureVisualLineCounts(lines) {
-      const fragment = document.createDocumentFragment();
+    function fitsSingleVisualRow(text) {
+      const item = document.createElement("div");
+      item.className = "line-measure__line";
+      item.textContent = text === "" ? " " : text;
+      sourceLineMeasure.replaceChildren(item);
+      return item.getBoundingClientRect().height <= gutterLineHeight + 1;
+    }
 
-      lines.forEach((line) => {
-        const item = document.createElement("div");
-        item.className = "line-measure__line";
-        item.textContent = line.text === "" ? " " : line.text;
-        fragment.append(item);
+    function splitIntoVisualRows(text) {
+      if (text === "") {
+        return [""];
+      }
+
+      const chars = Array.from(text);
+      const rows = [];
+      let cursor = 0;
+
+      while (cursor < chars.length) {
+        let low = 1;
+        let high = chars.length - cursor;
+        let best = 1;
+
+        while (low <= high) {
+          const middle = Math.floor((low + high) / 2);
+          const probe = chars.slice(cursor, cursor + middle).join("");
+
+          if (fitsSingleVisualRow(probe)) {
+            best = middle;
+            low = middle + 1;
+            continue;
+          }
+
+          high = middle - 1;
+        }
+
+        rows.push(chars.slice(cursor, cursor + best).join(""));
+        cursor += best;
+      }
+
+      return rows;
+    }
+
+    function measureVisualRows(lines) {
+      return lines.map((line) => splitIntoVisualRows(line.text));
+    }
+
+    function countSegmentVisualRows(lines, visualRowsByLine) {
+      const counts = new Map();
+
+      lines.forEach((line, lineIndex) => {
+        if (line.rawIndex == null) {
+          return;
+        }
+
+        counts.set(
+          line.rawIndex,
+          (counts.get(line.rawIndex) || 0) + Math.max(1, visualRowsByLine[lineIndex].length),
+        );
       });
 
-      sourceLineMeasure.replaceChildren(fragment);
-
-      return Array.from(sourceLineMeasure.children).map((child) => {
-        const height = child.getBoundingClientRect().height;
-        return Math.max(1, Math.round(height / gutterLineHeight));
-      });
+      return counts;
     }
 
     function renderSourceGutter() {
       const model = buildSourceGutterModel(state, sourceText.selectionStart);
-      const visualLineCounts = measureVisualLineCounts(model.lines);
+      const visualRowsByLine = measureVisualRows(model.lines);
+      const segmentVisualRowCounts = countSegmentVisualRows(model.lines, visualRowsByLine);
+      const segmentProgressMap = new Map();
       const fragment = document.createDocumentFragment();
 
       model.lines.forEach((line, index) => {
-        const rowCount = Math.max(1, visualLineCounts[index] || 1);
+        const visualRows = visualRowsByLine[index];
 
-        for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+        if (line.rawIndex == null) {
+          visualRows.forEach(() => {
+            const row = document.createElement("div");
+            row.className = "line-gutter__row";
+            row.dataset.kind = line.kind;
+            row.dataset.active = "false";
+
+            const mark = document.createElement("span");
+            mark.className = "line-gutter__mark";
+            row.append(mark);
+            fragment.append(row);
+          });
+          return;
+        }
+
+        const segmentModel = model.segmentModelMap.get(line.rawIndex);
+        if (!segmentModel) {
+          return;
+        }
+
+        const prefixWeightedLength = countXWeightedLength(segmentModel.prefixText);
+        const totalVisualRows = segmentVisualRowCounts.get(line.rawIndex) || visualRows.length || 1;
+        let progress = segmentProgressMap.get(line.rawIndex);
+
+        if (!progress) {
+          progress = {
+            contentPrefix: "",
+            logicalLineCount: 0,
+            renderedRowCount: 0,
+            labelShown: false,
+            overflowStarted: prefixWeightedLength > X_WEIGHT_CONFIG.maxWeightedLength,
+          };
+          segmentProgressMap.set(line.rawIndex, progress);
+        }
+
+        if (progress.logicalLineCount > 0) {
+          progress.contentPrefix += "\n";
+        }
+        progress.logicalLineCount += 1;
+
+        visualRows.forEach((visualRowText) => {
+          progress.contentPrefix += visualRowText;
+          progress.renderedRowCount += 1;
+
+          if (!progress.overflowStarted) {
+            const currentWeightedLength =
+              prefixWeightedLength + countXWeightedLength(progress.contentPrefix);
+
+            if (currentWeightedLength > X_WEIGHT_CONFIG.maxWeightedLength) {
+              progress.overflowStarted = true;
+            } else if (
+              segmentModel.isOverflow &&
+              progress.renderedRowCount >= totalVisualRows
+            ) {
+              progress.overflowStarted = true;
+            }
+          }
+
           const row = document.createElement("div");
           row.className = "line-gutter__row";
-          row.dataset.kind = line.kind;
+          row.dataset.kind = progress.overflowStarted ? "overflow" : "ok";
           row.dataset.active = line.isActive ? "true" : "false";
+
+          if (!progress.labelShown) {
+            const value = document.createElement("span");
+            value.className = "line-gutter__value";
+            value.dataset.kind = segmentModel.isOverflow ? "overflow" : "ok";
+            value.textContent = String(segmentModel.weightedLength);
+            row.append(value);
+            progress.labelShown = true;
+          }
 
           const mark = document.createElement("span");
           mark.className = "line-gutter__mark";
           row.append(mark);
           fragment.append(row);
-        }
+        });
       });
 
       sourceGutterTrack.replaceChildren(fragment);
