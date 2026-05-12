@@ -431,6 +431,222 @@
     };
   }
 
+  function buildSegmentStatusList(state) {
+    const segments = splitSourceWithMetadata(
+      state.sourceText,
+      state.delimiterText,
+      state.ignoreBlankLinesAroundDelimiter,
+    );
+    const visibleCount = segments.filter((segment) => segment.displayText !== "").length;
+
+    let visibleIndex = 0;
+
+    return segments.map((segment, rawIndex) => {
+      if (segment.displayText === "") {
+        return {
+          rawIndex,
+          isVisible: false,
+          isOverflow: false,
+        };
+      }
+
+      visibleIndex += 1;
+
+      const finalText = buildIndexedText(
+        segment.displayText,
+        visibleIndex,
+        visibleCount,
+        state.indexMode,
+        state.indexLineBreaks,
+        state.customIndexMiddle,
+        state.customIndexLast,
+      );
+
+      return {
+        rawIndex,
+        isVisible: true,
+        isOverflow: countXWeightedLength(finalText) > X_WEIGHT_CONFIG.maxWeightedLength,
+      };
+    });
+  }
+
+  function getLogicalLineRanges(text) {
+    const normalized = normalizeInput(text);
+
+    if (normalized === "") {
+      return [{ start: 0, end: 0 }];
+    }
+
+    const lines = [];
+    let lineStart = 0;
+
+    for (let index = 0; index < normalized.length; index += 1) {
+      if (normalized[index] !== "\n") {
+        continue;
+      }
+
+      lines.push({
+        start: lineStart,
+        end: index,
+      });
+      lineStart = index + 1;
+    }
+
+    lines.push({
+      start: lineStart,
+      end: normalized.length,
+    });
+
+    return lines;
+  }
+
+  function buildSourceBlocks(sourceText, delimiterText) {
+    const source = normalizeInput(sourceText);
+    const delimiter = normalizeInput(delimiterText);
+
+    if (source === "") {
+      return [];
+    }
+
+    if (delimiter === "") {
+      return [
+        {
+          type: "segment",
+          rawIndex: 0,
+          start: 0,
+          end: source.length,
+        },
+      ];
+    }
+
+    const rawParts = source.split(delimiter);
+    const blocks = [];
+    let cursor = 0;
+
+    rawParts.forEach((rawText, rawIndex) => {
+      const start = cursor;
+      const end = start + rawText.length;
+
+      blocks.push({
+        type: "segment",
+        rawIndex,
+        start,
+        end,
+      });
+
+      if (rawIndex < rawParts.length - 1) {
+        const delimiterStart = end;
+        const delimiterEnd = delimiterStart + delimiter.length;
+
+        blocks.push({
+          type: "delimiter",
+          beforeRawIndex: rawIndex,
+          afterRawIndex: rawIndex + 1,
+          start: delimiterStart,
+          end: delimiterEnd,
+        });
+
+        cursor = delimiterEnd;
+        return;
+      }
+
+      cursor = end;
+    });
+
+    return blocks;
+  }
+
+  function findBlockAtOffset(blocks, offset) {
+    if (blocks.length === 0) {
+      return null;
+    }
+
+    const lastEnd = blocks[blocks.length - 1].end;
+    const probe =
+      lastEnd <= 0 ? 0 : Math.max(0, Math.min(typeof offset === "number" ? offset : 0, lastEnd - 1));
+
+    for (const block of blocks) {
+      if (probe >= block.start && probe < block.end) {
+        return block;
+      }
+    }
+
+    return blocks[blocks.length - 1];
+  }
+
+  function resolveActiveRawIndex(block, segmentStatuses) {
+    if (!block) {
+      return null;
+    }
+
+    if (block.type === "segment") {
+      return block.rawIndex;
+    }
+
+    const preferredIndexes = [block.beforeRawIndex, block.afterRawIndex];
+
+    for (const rawIndex of preferredIndexes) {
+      const status = segmentStatuses[rawIndex];
+      if (status && status.isVisible) {
+        return rawIndex;
+      }
+    }
+
+    return block.beforeRawIndex;
+  }
+
+  function buildSourceGutterModel(state, caretOffset) {
+    const source = normalizeInput(state.sourceText);
+    const lines = getLogicalLineRanges(source);
+
+    if (source === "") {
+      return {
+        lines: lines.map(() => ({
+          text: "",
+          kind: "empty",
+          isActive: false,
+        })),
+      };
+    }
+
+    const segmentStatuses = buildSegmentStatusList(state);
+    const blocks = buildSourceBlocks(source, state.delimiterText);
+    const activeBlock = findBlockAtOffset(blocks, caretOffset);
+    const activeRawIndex = resolveActiveRawIndex(activeBlock, segmentStatuses);
+    const lastProbeOffset = Math.max(0, source.length - 1);
+
+    return {
+      lines: lines.map((line) => {
+        const block = findBlockAtOffset(blocks, Math.min(line.start, lastProbeOffset));
+
+        if (!block) {
+          return {
+            text: source.slice(line.start, line.end),
+            kind: "empty",
+            isActive: false,
+          };
+        }
+
+        if (block.type === "delimiter") {
+          return {
+            text: source.slice(line.start, line.end),
+            kind: "separator",
+            isActive: false,
+          };
+        }
+
+        const status = segmentStatuses[block.rawIndex];
+        const kind = !status || !status.isVisible ? "empty" : status.isOverflow ? "overflow" : "ok";
+
+        return {
+          text: source.slice(line.start, line.end),
+          kind,
+          isActive: activeRawIndex === block.rawIndex,
+        };
+      }),
+    };
+  }
+
   function getAssistTokens(text) {
     const tokens = [];
     let offset = 0;
@@ -580,6 +796,9 @@
 
   function initApp() {
     const sourceText = document.querySelector("#sourceText");
+    const sourceGutter = document.querySelector("#sourceGutter");
+    const sourceGutterTrack = document.querySelector("#sourceGutterTrack");
+    const sourceLineMeasure = document.querySelector("#sourceLineMeasure");
     const clearSource = document.querySelector("#clearSource");
     const delimiterText = document.querySelector("#delimiterText");
     const delimiterPreview = document.querySelector("#delimiterPreview");
@@ -602,6 +821,9 @@
 
     if (
       !sourceText ||
+      !sourceGutter ||
+      !sourceGutterTrack ||
+      !sourceLineMeasure ||
       !clearSource ||
       !delimiterText ||
       !delimiterPreview ||
@@ -627,6 +849,7 @@
     let isComposing = false;
     let delimiterPristine = state.delimiterText === DEFAULT_STATE.delimiterText;
     let toastTimer = null;
+    let gutterLineHeight = 28;
 
     function showToast(message) {
       toast.textContent = message;
@@ -650,6 +873,81 @@
       const enabled = state.indexMode === "custom-suffix";
       customIndexMiddle.disabled = !enabled;
       customIndexLast.disabled = !enabled;
+    }
+
+    function updateSourceGutterMetrics() {
+      const styles = window.getComputedStyle(sourceText);
+      const fontSize = Number.parseFloat(styles.fontSize) || 16;
+      const lineHeight =
+        styles.lineHeight === "normal"
+          ? `${Math.round(fontSize * 1.8)}px`
+          : styles.lineHeight;
+      const lineHeightPx = Number.parseFloat(lineHeight) || Math.round(fontSize * 1.8);
+      const paddingLeft = Number.parseFloat(styles.paddingLeft) || 0;
+      const paddingRight = Number.parseFloat(styles.paddingRight) || 0;
+      const measureWidth = Math.max(0, sourceText.clientWidth - paddingLeft - paddingRight);
+
+      gutterLineHeight = lineHeightPx;
+      sourceGutter.style.setProperty("--gutter-pad-top", styles.paddingTop);
+      sourceGutter.style.setProperty("--gutter-pad-bottom", styles.paddingBottom);
+      sourceGutter.style.setProperty("--gutter-line-height", lineHeight);
+
+      sourceLineMeasure.style.width = `${measureWidth}px`;
+      sourceLineMeasure.style.font = styles.font;
+      sourceLineMeasure.style.fontKerning = styles.fontKerning;
+      sourceLineMeasure.style.fontStretch = styles.fontStretch;
+      sourceLineMeasure.style.fontVariant = styles.fontVariant;
+      sourceLineMeasure.style.fontWeight = styles.fontWeight;
+      sourceLineMeasure.style.letterSpacing = styles.letterSpacing;
+      sourceLineMeasure.style.lineHeight = lineHeight;
+      sourceLineMeasure.style.tabSize = styles.tabSize;
+    }
+
+    function syncSourceGutterScroll() {
+      sourceGutterTrack.style.transform = `translateY(${-sourceText.scrollTop}px)`;
+    }
+
+    function measureVisualLineCounts(lines) {
+      const fragment = document.createDocumentFragment();
+
+      lines.forEach((line) => {
+        const item = document.createElement("div");
+        item.className = "line-measure__line";
+        item.textContent = line.text === "" ? " " : line.text;
+        fragment.append(item);
+      });
+
+      sourceLineMeasure.replaceChildren(fragment);
+
+      return Array.from(sourceLineMeasure.children).map((child) => {
+        const height = child.getBoundingClientRect().height;
+        return Math.max(1, Math.round(height / gutterLineHeight));
+      });
+    }
+
+    function renderSourceGutter() {
+      const model = buildSourceGutterModel(state, sourceText.selectionStart);
+      const visualLineCounts = measureVisualLineCounts(model.lines);
+      const fragment = document.createDocumentFragment();
+
+      model.lines.forEach((line, index) => {
+        const rowCount = Math.max(1, visualLineCounts[index] || 1);
+
+        for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+          const row = document.createElement("div");
+          row.className = "line-gutter__row";
+          row.dataset.kind = line.kind;
+          row.dataset.active = line.isActive ? "true" : "false";
+
+          const mark = document.createElement("span");
+          mark.className = "line-gutter__mark";
+          row.append(mark);
+          fragment.append(row);
+        }
+      });
+
+      sourceGutterTrack.replaceChildren(fragment);
+      syncSourceGutterScroll();
     }
 
     function syncFormFromState() {
@@ -764,10 +1062,15 @@
       });
     }
 
+    function renderOutputState() {
+      renderPreview();
+      renderSourceGutter();
+    }
+
     function refresh() {
       syncStateFromForm();
       saveStoredState(state);
-      renderPreview();
+      renderOutputState();
     }
 
     sourceText.addEventListener("compositionstart", () => {
@@ -784,6 +1087,13 @@
         refresh();
       }
     });
+
+    sourceText.addEventListener("scroll", syncSourceGutterScroll);
+    sourceText.addEventListener("click", renderSourceGutter);
+    sourceText.addEventListener("focus", renderSourceGutter);
+    sourceText.addEventListener("keyup", renderSourceGutter);
+    sourceText.addEventListener("mouseup", renderSourceGutter);
+    sourceText.addEventListener("select", renderSourceGutter);
 
     delimiterText.addEventListener("compositionstart", () => {
       isComposing = true;
@@ -826,7 +1136,7 @@
     resetDelimiter.addEventListener("click", () => {
       replaceDelimiterWithDefault();
       saveStoredState(state);
-      renderPreview();
+      renderOutputState();
       showToast("区切り文字列をデフォルトに戻しました。");
     });
 
@@ -834,7 +1144,7 @@
       state.sourceText = "";
       sourceText.value = "";
       saveStoredState(state);
-      renderPreview();
+      renderOutputState();
       showToast("入力欄をクリアしました。");
     });
 
@@ -855,7 +1165,7 @@
       state.sourceText = result.text;
       sourceText.value = state.sourceText;
       saveStoredState(state);
-      renderPreview();
+      renderOutputState();
 
       if (result.insertedCount === 0) {
         showToast("自動アシストで追加された区切りはありませんでした。");
@@ -875,8 +1185,21 @@
       showToast(copied ? "コピーしました。" : "コピーに失敗しました。");
     });
 
+    updateSourceGutterMetrics();
+    if (typeof ResizeObserver !== "undefined") {
+      const resizeObserver = new ResizeObserver(() => {
+        updateSourceGutterMetrics();
+        renderSourceGutter();
+      });
+      resizeObserver.observe(sourceText);
+    }
+    window.addEventListener("resize", () => {
+      updateSourceGutterMetrics();
+      renderSourceGutter();
+    });
+
     syncFormFromState();
-    renderPreview();
+    renderOutputState();
   }
 
   const exported = {

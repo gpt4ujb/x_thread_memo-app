@@ -144,6 +144,84 @@
 
       #sourceText {
         min-height: 860px;
+        margin: 0;
+      }
+
+      .editor-layout {
+        display: grid;
+        grid-template-columns: 12px minmax(0, 1fr);
+        gap: 6px;
+        align-items: stretch;
+      }
+
+      .line-gutter {
+        overflow: hidden;
+        pointer-events: none;
+        user-select: none;
+        --gutter-pad-top: 18px;
+        --gutter-pad-bottom: 18px;
+        --gutter-line-height: 28px;
+      }
+
+      .line-gutter__track {
+        padding-top: var(--gutter-pad-top);
+        padding-bottom: var(--gutter-pad-bottom);
+        transform: translateY(0);
+        will-change: transform;
+      }
+
+      .line-gutter__row {
+        height: var(--gutter-line-height);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .line-gutter__mark {
+        width: 4px;
+        height: 14px;
+        border-radius: 999px;
+        background: rgba(24, 37, 47, 0.1);
+        opacity: 0.45;
+        transition: opacity 150ms ease, background-color 150ms ease, transform 150ms ease;
+      }
+
+      .line-gutter__row[data-kind="ok"] .line-gutter__mark {
+        background: rgba(31, 122, 108, 0.22);
+      }
+
+      .line-gutter__row[data-kind="overflow"] .line-gutter__mark {
+        background: rgba(190, 83, 52, 0.72);
+        opacity: 0.9;
+      }
+
+      .line-gutter__row[data-kind="separator"] .line-gutter__mark,
+      .line-gutter__row[data-kind="empty"] .line-gutter__mark {
+        background: rgba(24, 37, 47, 0.08);
+        opacity: 0.24;
+      }
+
+      .line-gutter__row[data-active="true"] .line-gutter__mark {
+        opacity: 1;
+        transform: scaleX(1.15);
+      }
+
+      .line-measure {
+        position: absolute;
+        left: -99999px;
+        top: 0;
+        visibility: hidden;
+        pointer-events: none;
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+        word-break: break-word;
+      }
+
+      .line-measure__line {
+        display: block;
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+        word-break: break-word;
       }
 
       #delimiterText {
@@ -611,11 +689,17 @@
               <button id="clearSource" type="button" class="secondary-button">クリア</button>
             </div>
 
-            <textarea
+            <div class="editor-layout">
+              <div id="sourceGutter" class="line-gutter" aria-hidden="true">
+                <div id="sourceGutterTrack" class="line-gutter__track"></div>
+              </div>
+              <textarea
               id="sourceText"
               spellcheck="false"
               placeholder="ここに原稿を入力します。区切りたい場所には、設定した区切り文字列を自分で打ち込みます。"
-            ></textarea>
+              ></textarea>
+              <div id="sourceLineMeasure" class="line-measure" aria-hidden="true"></div>
+            </div>
 
           </article>
         </section>
